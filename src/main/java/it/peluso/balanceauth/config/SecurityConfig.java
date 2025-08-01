@@ -82,10 +82,12 @@ public class SecurityConfig {
             throws Exception {
         http
                 .authorizeHttpRequests((authorize) -> authorize
-                        .requestMatchers("/api/auth/register").permitAll()
+                        .requestMatchers("/api/auth/register", "/api/auth/login").permitAll()
+                        .requestMatchers("/oauth2/**", "/.well-known/**").permitAll()
                         .anyRequest().authenticated()
                 )
-                .formLogin(Customizer.withDefaults());
+                .formLogin(Customizer.withDefaults())
+                .csrf(csrf -> csrf.disable());
 
         return http.build();
     }
@@ -107,20 +109,46 @@ public class SecurityConfig {
 
     @Bean
     public RegisteredClientRepository registeredClientRepository() {
-        RegisteredClient oidcClient = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("oidc-client")
-                .clientSecret("{noop}secret")
+        // Client for web applications (authorization code flow)
+        RegisteredClient webClient = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId("web-client")
+                .clientSecret("{noop}web-secret")
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                 .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                 .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
-                .redirectUri("http://127.0.0.1:8080/login/oauth2/code/oidc-client")
-                .postLogoutRedirectUri("http://127.0.0.1:8080/")
+                .redirectUri("http://127.0.0.1:3000/callback")
+                .redirectUri("http://localhost:3000/callback")
+                .postLogoutRedirectUri("http://127.0.0.1:3000/")
                 .scope(OidcScopes.OPENID)
                 .scope(OidcScopes.PROFILE)
+                .scope("read")
+                .scope("write")
                 .clientSettings(ClientSettings.builder().requireAuthorizationConsent(true).build())
                 .build();
 
-        return new InMemoryRegisteredClientRepository(oidcClient);
+        // Client for Fastify microservice (client credentials flow)
+        RegisteredClient fastifyClient = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId("fastify-service")
+                .clientSecret("{noop}fastify-secret")
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .scope("read")
+                .scope("write")
+                .clientSettings(ClientSettings.builder().build())
+                .build();
+
+        // Client for NestJS microservice (client credentials flow)
+        RegisteredClient nestClient = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId("nest-service")
+                .clientSecret("{noop}nest-secret")
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .scope("read")
+                .scope("write")
+                .clientSettings(ClientSettings.builder().build())
+                .build();
+
+        return new InMemoryRegisteredClientRepository(webClient, fastifyClient, nestClient);
     }
 
     @Bean
