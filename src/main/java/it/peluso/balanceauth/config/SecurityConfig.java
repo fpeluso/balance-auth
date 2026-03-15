@@ -6,6 +6,7 @@ import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import it.peluso.balanceauth.service.CustomUserDetailsService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -35,16 +36,19 @@ import org.springframework.security.oauth2.server.authorization.token.OAuth2Toke
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
+import org.springframework.util.StringUtils;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
+import java.security.KeyFactory;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
@@ -53,6 +57,36 @@ import java.util.UUID;
 public class SecurityConfig {
 
     private final CustomUserDetailsService userDetailsService;
+
+    @Value("${app.oauth2.clients.bank-accounts.client-id}")
+    private String bankClientId;
+
+    @Value("${app.oauth2.clients.bank-accounts.client-secret}")
+    private String bankClientSecret;
+
+    @Value("${app.oauth2.clients.transactions.client-id}")
+    private String transactionsClientId;
+
+    @Value("${app.oauth2.clients.transactions.client-secret}")
+    private String transactionsClientSecret;
+
+    @Value("${app.oauth2.clients.frontend.client-id}")
+    private String frontendClientId;
+
+    @Value("${app.oauth2.clients.frontend.client-secret}")
+    private String frontendClientSecret;
+
+    @Value("${app.oauth2.issuer}")
+    private String issuer;
+
+    @Value("${app.oauth2.keys.public}")
+    private String publicKeyPem;
+
+    @Value("${app.oauth2.keys.private}")
+    private String privateKeyPem;
+
+    @Value("${app.security.cors.allowed-origins}")
+    private String allowedOrigins;
 
     public SecurityConfig(CustomUserDetailsService userDetailsService) {
         this.userDetailsService = userDetailsService;
@@ -69,11 +103,10 @@ public class SecurityConfig {
                 .securityMatcher(authorizationServerConfigurer.getEndpointsMatcher())
                 .with(authorizationServerConfigurer, authorizationServer ->
                         authorizationServer
-                                .oidc(Customizer.withDefaults())    // Enable OpenID Connect 1.0
+                                .oidc(Customizer.withDefaults())
                 )
                 .authorizeHttpRequests((authorize) ->
-                        authorize
-                                .anyRequest().authenticated()
+                        authorize.anyRequest().authenticated()
                 )
                 .exceptionHandling(exceptions -> exceptions
                         .defaultAuthenticationEntryPointFor(
@@ -92,7 +125,8 @@ public class SecurityConfig {
             throws Exception {
         http
                 .authorizeHttpRequests((authorize) -> authorize
-                        .requestMatchers("/api/auth/register", "/api/auth/user-info", "/.well-known/jwks.json").permitAll()
+                        .requestMatchers("/api/auth/register", "/.well-known/jwks.json").permitAll()
+                        .requestMatchers("/api/auth/user-info").authenticated()
                         .anyRequest().authenticated()
                 )
                 .formLogin(Customizer.withDefaults())
@@ -118,48 +152,35 @@ public class SecurityConfig {
 
     @Bean
     public RegisteredClientRepository registeredClientRepository() {
-        // Client for Fastify Bank Accounts Service
         RegisteredClient fastifyBankClient = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("bank-accounts-service")
-                .clientSecret("{bcrypt}$2a$10$MKB0y3JnPpTgJgGnhqBUPueXqxX.DzGIJr5YVKwk8nWHpSNJVgGLm") // "bank-secret"
+                .clientId(bankClientId)
+                .clientSecret(bankClientSecret)
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                 .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
-                .redirectUri("http://localhost:3000/auth/callback")
                 .scope("bank:read")
                 .scope("bank:write")
-                .scope("profile")
                 .tokenSettings(TokenSettings.builder()
-                        .accessTokenTimeToLive(Duration.ofHours(1))
-                        .refreshTokenTimeToLive(Duration.ofDays(7))
+                        .accessTokenTimeToLive(Duration.ofMinutes(30))
                         .build())
                 .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
                 .build();
 
-        // Client for NestJS Transactions Service
         RegisteredClient nestjsTransactionsClient = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("transactions-service")
-                .clientSecret("{bcrypt}$2a$10$V8ZjHo7JgxQcKKaFyHRJDuAA8cYV5tKWs7YgL1UjP3VwYXB2X8YZC") // "transaction-secret"
+                .clientId(transactionsClientId)
+                .clientSecret(transactionsClientSecret)
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                 .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
-                .redirectUri("http://localhost:3001/auth/callback")
                 .scope("transaction:read")
                 .scope("transaction:write")
-                .scope("profile")
                 .tokenSettings(TokenSettings.builder()
-                        .accessTokenTimeToLive(Duration.ofHours(1))
-                        .refreshTokenTimeToLive(Duration.ofDays(7))
+                        .accessTokenTimeToLive(Duration.ofMinutes(30))
                         .build())
                 .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
                 .build();
 
-        // General OIDC Client (for frontend applications)
         RegisteredClient oidcClient = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("expense-tracker-frontend")
-                .clientSecret("{bcrypt}$2a$10$L1hKJ9Z3Y2vHJd6KLMpQZeYxGHq4DpBpUjZbNmViU8vBjGxJt5WbO") // "frontend-secret"
+                .clientId(frontendClientId)
+                .clientSecret(frontendClientSecret)
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                 .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                 .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
@@ -174,10 +195,14 @@ public class SecurityConfig {
                 .scope("transaction:read")
                 .scope("transaction:write")
                 .tokenSettings(TokenSettings.builder()
-                        .accessTokenTimeToLive(Duration.ofHours(2))
-                        .refreshTokenTimeToLive(Duration.ofDays(30))
+                        .accessTokenTimeToLive(Duration.ofMinutes(30))
+                        .refreshTokenTimeToLive(Duration.ofDays(7))
+                        .reuseRefreshTokens(false)
                         .build())
-                .clientSettings(ClientSettings.builder().requireAuthorizationConsent(true).build())
+                .clientSettings(ClientSettings.builder()
+                        .requireAuthorizationConsent(true)
+                        .requireProofKey(true)
+                        .build())
                 .build();
 
         return new InMemoryRegisteredClientRepository(fastifyBankClient, nestjsTransactionsClient, oidcClient);
@@ -185,27 +210,51 @@ public class SecurityConfig {
 
     @Bean
     public JWKSource<SecurityContext> jwkSource() {
-        KeyPair keyPair = generateRsaKey();
-        RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
-        RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
+        RSAPublicKey publicKey = parsePublicKey(publicKeyPem);
+        RSAPrivateKey privateKey = parsePrivateKey(privateKeyPem);
+
         RSAKey rsaKey = new RSAKey.Builder(publicKey)
                 .privateKey(privateKey)
-                .keyID(UUID.randomUUID().toString())
+                .keyID("balance-auth-key")
                 .build();
-        JWKSet jwkSet = new JWKSet(rsaKey);
-        return new ImmutableJWKSet<>(jwkSet);
+
+        return new ImmutableJWKSet<>(new JWKSet(rsaKey));
     }
 
-    private static KeyPair generateRsaKey() {
-        KeyPair keyPair;
-        try {
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
-            keyPairGenerator.initialize(2048);
-            keyPair = keyPairGenerator.generateKeyPair();
-        } catch (Exception ex) {
-            throw new IllegalStateException(ex);
+    private RSAPublicKey parsePublicKey(String key) {
+        if (!StringUtils.hasText(key)) {
+            throw new IllegalStateException("Missing app.oauth2.keys.public");
         }
-        return keyPair;
+        try {
+            byte[] bytes = parsePem(key);
+            X509EncodedKeySpec spec = new X509EncodedKeySpec(bytes);
+            return (RSAPublicKey) KeyFactory.getInstance("RSA").generatePublic(spec);
+        } catch (Exception e) {
+            throw new IllegalStateException("Invalid RSA public key configuration", e);
+        }
+    }
+
+    private RSAPrivateKey parsePrivateKey(String key) {
+        if (!StringUtils.hasText(key)) {
+            throw new IllegalStateException("Missing app.oauth2.keys.private");
+        }
+        try {
+            byte[] bytes = parsePem(key);
+            PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(bytes);
+            return (RSAPrivateKey) KeyFactory.getInstance("RSA").generatePrivate(spec);
+        } catch (Exception e) {
+            throw new IllegalStateException("Invalid RSA private key configuration", e);
+        }
+    }
+
+    private byte[] parsePem(String pem) {
+        String normalized = pem
+                .replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replace("-----BEGIN PRIVATE KEY-----", "")
+                .replace("-----END PRIVATE KEY-----", "")
+                .replaceAll("\\s", "");
+        return Base64.getDecoder().decode(normalized);
     }
 
     @Bean
@@ -216,7 +265,7 @@ public class SecurityConfig {
     @Bean
     public AuthorizationServerSettings authorizationServerSettings() {
         return AuthorizationServerSettings.builder()
-                .issuer("http://localhost:9000")
+                .issuer(issuer)
                 .build();
     }
 
@@ -225,21 +274,13 @@ public class SecurityConfig {
         return context -> {
             if (context.getPrincipal() != null) {
                 context.getClaims().claim("user_id", context.getPrincipal().getName());
-                
-                // Add user roles to the token
                 if (context.getPrincipal().getAuthorities() != null) {
-                    context.getClaims().claim("roles", 
-                        context.getPrincipal().getAuthorities().stream()
-                            .map(authority -> authority.getAuthority())
-                            .toList());
+                    context.getClaims().claim("roles",
+                            context.getPrincipal().getAuthorities().stream()
+                                    .map(authority -> authority.getAuthority())
+                                    .toList());
                 }
-                
-                // Add service-specific claims based on scope
-                var scopes = context.getAuthorizedScopes();
-                context.getClaims().claim("scopes", scopes);
-                
-                // Add issuer information
-                context.getClaims().claim("iss", "http://localhost:9000");
+                context.getClaims().claim("scopes", context.getAuthorizedScopes());
             }
         };
     }
@@ -247,11 +288,15 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOriginPatterns(Arrays.asList("*"));
+        List<String> origins = Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .filter(StringUtils::hasText)
+                .toList();
+        configuration.setAllowedOrigins(origins);
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(Arrays.asList("*"));
+        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With"));
         configuration.setAllowCredentials(true);
-        
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
