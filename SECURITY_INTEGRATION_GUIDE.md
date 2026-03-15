@@ -69,19 +69,19 @@ The authorization server is pre-configured with three OAuth2 clients:
 
 ### 1. Bank Accounts Service (Fastify)
 - **Client ID**: `bank-accounts-service`
-- **Client Secret**: `bank-secret`
+- **Client Secret**: configured via environment variable (do not hardcode)
 - **Scopes**: `bank:read`, `bank:write`, `profile`
 - **Port**: 3000
 
 ### 2. Transactions Service (NestJS)
 - **Client ID**: `transactions-service`
-- **Client Secret**: `transaction-secret`
+- **Client Secret**: configured via environment variable (do not hardcode)
 - **Scopes**: `transaction:read`, `transaction:write`, `profile`
 - **Port**: 3001
 
 ### 3. Frontend Application
 - **Client ID**: `expense-tracker-frontend`
-- **Client Secret**: `frontend-secret`
+- **Client Secret**: configured via environment variable (do not hardcode)
 - **Scopes**: `openid`, `profile`, `email`, `bank:read`, `transaction:read`, `transaction:write`
 
 ## Fastify Integration
@@ -157,7 +157,7 @@ const tokenResponse = await fetch('http://localhost:9000/oauth2/token', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/x-www-form-urlencoded',
-    'Authorization': 'Basic ' + btoa('expense-tracker-frontend:frontend-secret')
+    'Authorization': 'Basic ' + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)
   },
   body: new URLSearchParams({
     'grant_type': 'authorization_code',
